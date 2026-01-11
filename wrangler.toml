@@ -7,5 +7,5 @@ compatibility_date = "2023-12-01"
 # pero para pruebas rápidas puedes descomentar la línea de abajo y poner tu URL.
 
 [vars]
-# STREMIO_SERVER_URL = "https://tu-proxy-privado.workers.dev" 
+STREMIO_SERVER_URL = "https://stremioproxied.sakvragi.workers.dev" 
 # DEJA ESTO COMENTADO SI USAS SECRETOS (RECOMENDADO)
