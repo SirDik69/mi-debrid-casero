@@ -2,136 +2,75 @@ import { Router } from 'itty-router';
 
 const router = Router();
 
-// URL de Torrentio configurada (Providers + Quality)
-const TORRENTIO_URL = "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,magnetdl,torrentgalaxy";
-
-// Headers CORS Universales (Blindado)
+// Headers CORS permisivos para depuración
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, Origin, X-Requested-With",
-  "Content-Type": "application/json; charset=utf-8" // Importante charset
+  "Access-Control-Allow-Headers": "*", // Permitir todo para test
+  "Content-Type": "application/json; charset=utf-8"
 };
 
-// Función helper para responder JSON rápido
 const json = (data) => new Response(JSON.stringify(data), { headers: corsHeaders });
 
-// ==========================================
-// 1. MANIFEST (Estricto con Objetos)
-// ==========================================
+// 1. MANIFEST (Lo más simple y estándar posible)
 router.get('/manifest.json', () => {
   return json({
-    id: "com.midomain.httpbridge",
-    version: "1.0.5",
-    name: "HTTP Bridge (Nuvio)",
-    description: "Puente HTTPS para Stremio Server - Fixed",
-    // Icono opcional para que se vea bien
-    logo: "https://dl.strem.io/addon-logo.png", 
-    
-    // Aquí el cambio clave: Resources como objetos detallados
+    id: "com.debug.test",
+    version: "0.0.1",
+    name: "🔴 DEBUG TESTER",
+    description: "Addon de prueba para validar Nuvio",
+    logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/1/11/Test-Logo.svg/783px-Test-Logo.svg.png",
     resources: [
-      {
-        name: "stream",
-        types: ["movie", "series"],
-        idPrefixes: ["tt"]
-      },
-      {
-        name: "meta", // Agregado para satisfacer clientes estrictos
-        types: ["movie", "series"],
-        idPrefixes: ["tt"]
-      }
+      { name: "stream", types: ["movie", "series"], idPrefixes: ["tt"] },
+      { name: "meta", types: ["movie", "series"], idPrefixes: ["tt"] }
     ],
-    
     types: ["movie", "series"],
-    catalogs: [], // Explícito vacío
-    idPrefixes: ["tt"]
+    catalogs: []
   });
 });
 
-// ==========================================
-// 2. META (Stub/Dummy)
-// ==========================================
-// Aunque no tengamos metadata propia, respondemos lo básico para que Nuvio no falle
+// 2. META (Respuesta simulada)
 router.get('/meta/:type/:id.json', ({ params }) => {
-  const { type, id } = params;
-  // Solo devolvemos el ID y tipo para confirmar existencia
   return json({
     meta: {
-      id: id.replace(".json", ""),
-      type: type,
-      name: id, // Placeholder
-      poster: "", // Evita errores de null
-      background: ""
+      id: params.id.replace(".json", ""),
+      type: params.type,
+      name: "TEST MOVIE",
+      poster: "https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg",
+      description: "Si ves esto, el endpoint /meta funciona bien."
     }
   });
 });
 
-// ==========================================
-// 3. STREAM (La Lógica Principal)
-// ==========================================
-router.get('/stream/:type/:id.json', async (request, env) => {
-  let { type, id } = request.params;
-  id = decodeURIComponent(id).replace(".json", ""); // Limpieza extra
+// 3. STREAMS (Aquí está la prueba de fuego)
+router.get('/stream/:type/:id.json', (request, env) => {
+  
+  // Recuperar tu URL de servidor si existe, sino poner una dummy
+  const serverUrl = env.STREMIO_SERVER_URL 
+    ? env.STREMIO_SERVER_URL.replace(/\/$/, "") 
+    : "https://ejemplo-no-configurado.com";
 
-  if (!env.STREMIO_SERVER_URL) {
-    return json({ streams: [{ title: "⚠️ Config Error: STREMIO_SERVER_URL missing", url: "" }] });
-  }
-
-  const serverUrl = env.STREMIO_SERVER_URL.replace(/\/$/, "");
-
-  try {
-    const targetUrl = `${TORRENTIO_URL}/stream/${type}/${id}.json`;
-    console.log(`Pidiendo a: ${targetUrl}`);
-
-    const response = await fetch(targetUrl, {
-        headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-    });
-
-    if (!response.ok) return json({ streams: [] });
-
-    const data = await response.json();
-
-    if (!data.streams || !data.streams.length) return json({ streams: [] });
-
-    const newStreams = data.streams.map(stream => {
-      // Filtros de seguridad
-      if (!stream.infoHash) return null;
-
-      const fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
-      const directUrl = `${serverUrl}/${stream.infoHash}/${fileIdx}`;
-      
-      // Limpieza del título para que se vea pro en Nuvio
-      const metaLine = stream.title?.split('\n')[0] || "Stream";
-      const techDetails = stream.title?.split('\n')[1] || "";
-
-      return {
-        name: "⚡ HTTP Bridge",
-        title: `${metaLine}\n${techDetails}`, // Mantiene info de calidad (4K, HDR)
-        url: directUrl,
-        behaviorHints: {
-          notWebReady: false, 
-          bingeGroup: stream.behaviorHints?.bingeGroup,
-          filename: stream.behaviorHints?.filename
-        }
-      };
-    }).filter(Boolean);
-
-    return json({ streams: newStreams });
-
-  } catch (error) {
-    console.error(error);
-    return json({ streams: [] });
-  }
+  return json({
+    streams: [
+      // PRUEBA A: Enlace MP4 directo público (Debe funcionar sí o sí)
+      {
+        name: "✅ TEST MP4",
+        title: "Big Buck Bunny\nPrueba de reproducción directa",
+        url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+        behaviorHints: { notWebReady: false }
+      },
+      // PRUEBA B: Simulación de tu enlace (Para ver si Nuvio acepta el formato)
+      {
+        name: "🔗 TEST PROXY",
+        title: "Enlace Simulado a tu Servidor\nVerifica si aparece en lista",
+        url: `${serverUrl}/infohash_falso_123/0`,
+        behaviorHints: { notWebReady: false }
+      }
+    ]
+  });
 });
 
-// Manejo de OPTIONS (Pre-flight CORS)
 router.options('*', () => new Response(null, { headers: corsHeaders }));
-
-// 404
 router.all('*', () => new Response('Not Found', { status: 404, headers: corsHeaders }));
 
-export default {
-  fetch: router.handle
-};
+export default { fetch: router.handle };
