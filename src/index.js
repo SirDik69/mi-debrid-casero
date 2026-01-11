@@ -7,7 +7,7 @@ const router = Router();
 // ==========================================
 const PROVIDERS = [
   { name: "TorrentsDB", url: "https://torrentsdb.com/stream" },
-  { name: "Torrentio Lite", url: "https://torrentio.strem.fun/lite/stream" },
+  { name: "AioStreams", url: "https://aiostreamsfortheweebs.midnightignite.me/stremio/0479360b-f14a-4dff-b7b5-32d70809a4e7/eyJpdiI6IlR0RU1ubWU5NjNJSnFpOVhHVUpzdlE9PSIsImVuY3J5cHRlZCI6IlcwdGd6aEFZNFl1amJzVmhZVFdJRnc9PSIsInR5cGUiOiJhaW9FbmNyeXB0In0/stream" },
   { name: "ThePirateBay+", url: "https://thepiratebay-plus.strem.fun/stream" }
 ];
 
