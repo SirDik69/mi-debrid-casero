@@ -2,27 +2,39 @@ import { Router } from 'itty-router';
 
 const router = Router();
 
-// Headers CORS que ya comprobamos que funcionan
-const corsHeaders = {
+// Headers para RESPONDER a Nuvio (CORS permisivo)
+const responseHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
   "Access-Control-Allow-Headers": "*",
   "Content-Type": "application/json; charset=utf-8"
 };
 
-const json = (data) => new Response(JSON.stringify(data), { headers: corsHeaders });
+const json = (data) => new Response(JSON.stringify(data), { headers: responseHeaders });
 
-// URL de Torrentio "Standard" (Providers comunes + Calidad)
-// Usamos esta para garantizar resultados.
-const TORRENTIO_BASE = "https://torrentio.strem.fun/providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,magnetdl,torrentgalaxy|quality=720p,1080p,4k,scr,cam";
+// CONFIGURACIÓN DE TORRENTIO
+// Nota: Usamos %7C en lugar de | para asegurar compatibilidad con fetch
+const TORRENTIO_CONFIG = "providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,magnetdl,torrentgalaxy%7Cquality=720p,1080p,4k";
+const TORRENTIO_URL = "https://torrentio.strem.fun";
 
-// 1. MANIFEST (Formato que le gustó a Nuvio)
+// Headers para PEDIR a Torrentio (Disfraz de Stremio Web)
+const torrentioRequestHeaders = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept": "*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Origin": "https://web.stremio.com", // Hacemos creer que somos Stremio Web
+  "Referer": "https://web.stremio.com/",
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "cross-site"
+};
+
 router.get('/manifest.json', () => {
   return json({
-    id: "com.nuvio.httpbridge",
-    version: "1.1.0",
-    name: "HTTP Bridge",
-    description: "Convierte Torrents a HTTPS Directo",
+    id: "com.nuvio.httpbridge.v2",
+    version: "1.2.0",
+    name: "HTTP Bridge (Stealth)",
+    description: "Bypasses torrent restrictions via HTTPS",
     logo: "https://dl.strem.io/addon-logo.png",
     resources: [
       { name: "stream", types: ["movie", "series"], idPrefixes: ["tt"] },
@@ -33,88 +45,72 @@ router.get('/manifest.json', () => {
   });
 });
 
-// 2. META (Stub necesario para Nuvio)
 router.get('/meta/:type/:id.json', ({ params }) => {
   return json({
     meta: {
       id: params.id.replace(".json", ""),
       type: params.type,
-      name: "Metadata Placeholder",
+      name: "Meta Placeholder"
     }
   });
 });
 
-// 3. STREAM (Lógica Real)
 router.get('/stream/:type/:id.json', async (request, env) => {
   let { type, id } = request.params;
-  
-  // Limpieza del ID (importante para series tt123:1:1)
   id = decodeURIComponent(id).replace(".json", "");
 
-  // Verificar Variable de Entorno
   if (!env.STREMIO_SERVER_URL) {
-    return json({ 
-      streams: [{ 
-        name: "⚠️ ERROR", 
-        title: "Falta configurar STREMIO_SERVER_URL en Cloudflare", 
-        url: "http://error" 
-      }] 
-    });
+    return json({ streams: [{ name: "⚠️ ERROR", title: "Configura STREMIO_SERVER_URL", url: "#" }] });
   }
-  
+
   const serverUrl = env.STREMIO_SERVER_URL.replace(/\/$/, "");
 
   try {
-    // Construir URL de Torrentio
-    const targetUrl = `${TORRENTIO_BASE}/stream/${type}/${id}.json`;
-    console.log(`Fetching: ${targetUrl}`);
+    // Construimos la URL final apuntando a la configuración
+    const targetUrl = `${TORRENTIO_URL}/${TORRENTIO_CONFIG}/stream/${type}/${id}.json`;
+    console.log(`Intentando conectar a: ${targetUrl}`);
 
-    // Fetch a Torrentio con Headers de Navegador (Anti-bloqueo)
     const response = await fetch(targetUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-        "Accept": "application/json"
-      }
+      method: "GET",
+      headers: torrentioRequestHeaders
     });
 
     if (!response.ok) {
-      return json({ 
-        streams: [{ name: "⚠️ ERROR", title: `Torrentio respondió error: ${response.status}`, url: "http://error" }] 
-      });
-    }
-
-    const data = await response.json();
-
-    // Si no hay resultados
-    if (!data.streams || data.streams.length === 0) {
-      return json({ 
-        streams: [{ name: "⚠️ VACÍO", title: "No se encontraron torrents para este contenido", url: "http://error" }] 
-      });
-    }
-
-    // PROCESAMIENTO DE STREAMS
-    const newStreams = data.streams.map(stream => {
-      // Filtro básico: debe tener infoHash
-      if (!stream.infoHash) return null;
-
-      // Lógica de índice (0 para pelis, específico para series)
-      const fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
+      // Si falla, intentamos una segunda estrategia sin configuración (Vanilla Torrentio)
+      // A veces la config personalizada es la que detona el bloqueo 403
+      console.log("Fallo con config, intentando vanilla...");
+      const vanillaUrl = `${TORRENTIO_URL}/stream/${type}/${id}.json`;
+      const responseRetry = await fetch(vanillaUrl, { headers: torrentioRequestHeaders });
       
-      // CONSTRUCCIÓN DEL ENLACE DEBRID/PROXY
-      const directUrl = `${serverUrl}/${stream.infoHash}/${fileIdx}`;
+      if (!responseRetry.ok) {
+        return json({ 
+           streams: [{ name: "⚠️ BLOCKED", title: `Torrentio Bloqueado: ${responseRetry.status} (Intenta más tarde)`, url: "#" }] 
+        });
+      }
+      // Si el reintento funciona, usamos esa data
+      var data = await responseRetry.json();
+    } else {
+      var data = await response.json();
+    }
 
-      // Formateo del título para que se vea bien en Nuvio
-      // Limpiamos saltos de línea excesivos
-      const parts = (stream.title || "").split("\n");
-      const cleanTitle = parts[0]; 
-      const details = parts[1] || `S:${stream.seeders || '?'} Size:${stream.behaviorHints?.filename || '?'}`;
+    if (!data.streams || !data.streams.length) {
+      return json({ streams: [{ name: "⚠️ VACÍO", title: "No se encontraron torrents", url: "#" }] });
+    }
+
+    const newStreams = data.streams.map(stream => {
+      if (!stream.infoHash) return null;
+      const fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
+      const directUrl = `${serverUrl}/${stream.infoHash}/${fileIdx}`;
+      
+      const titleLines = (stream.title || "").split("\n");
+      const mainTitle = titleLines[0];
 
       return {
-        name: "⚡ HTTP", // Nombre corto en la etiqueta
-        title: `${cleanTitle}\n${details}`, // Descripción
+        name: "⚡ HTTP",
+        title: `${mainTitle}\n${titleLines[1] || ''}`, 
         url: directUrl,
         behaviorHints: {
-          notWebReady: false, // Forzar compatibilidad web/iOS
+          notWebReady: false,
           bingeGroup: stream.behaviorHints?.bingeGroup,
           filename: stream.behaviorHints?.filename
         }
@@ -124,18 +120,11 @@ router.get('/stream/:type/:id.json', async (request, env) => {
     return json({ streams: newStreams });
 
   } catch (error) {
-    // Si algo explota, lo mostramos en la app
-    return json({ 
-      streams: [{ 
-        name: "☠️ CRASH", 
-        title: `Error del Worker: ${error.message}`, 
-        url: "http://error" 
-      }] 
-    });
+    return json({ streams: [{ name: "☠️ ERROR", title: error.message, url: "#" }] });
   }
 });
 
-router.options('*', () => new Response(null, { headers: corsHeaders }));
-router.all('*', () => new Response('Not Found', { status: 404, headers: corsHeaders }));
+router.options('*', () => new Response(null, { headers: responseHeaders }));
+router.all('*', () => new Response('Not Found', { status: 404, headers: responseHeaders }));
 
 export default { fetch: router.handle };
