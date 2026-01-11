@@ -3,25 +3,26 @@ import { Router } from 'itty-router';
 const router = Router();
 
 // ==========================================
-// CONFIGURACIÓN DE PROVEEDORES
+// CONFIGURACIÓN DE PROVEEDORES (NUEVOS)
 // ==========================================
-// La estrategia es probar uno por uno hasta obtener resultados.
 const PROVIDERS = [
   {
-    name: "KnightCrawler",
-    url: "https://knightcrawler.elfhosted.com/stream" // ElfHosted suele ser permisivo
+    name: "Comet", // Nuevo y muy rápido (suele funcionar donde Torrentio falla)
+    url: "https://comet.elfhosted.com/stream"
   },
   {
-    name: "TPB+",
-    url: "https://tpb.strem.fun/stream" // Simple y efectivo
+    name: "MediaFusion", // Excelente para Anime y películas
+    url: "https://mediafusion.elfhosted.com/stream"
   },
   {
-    name: "Torrentio",
-    url: "https://torrentio.strem.fun/stream" // El más estricto (Backup)
+    name: "Torrentio (Lite)", // Versión ligera, a veces salta el bloqueo
+    url: "https://torrentio.strem.fun/lite/stream"
   }
 ];
 
-// Headers estándar para respuesta
+// Disfraz de Googlebot (Abre muchas puertas 403)
+const GOOGLEBOT_UA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+
 const responseHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
@@ -31,16 +32,12 @@ const responseHeaders = {
 
 const json = (data) => new Response(JSON.stringify(data), { headers: responseHeaders });
 
-// ==========================================
-// RUTAS
-// ==========================================
-
 router.get('/manifest.json', () => {
   return json({
-    id: "com.nuvio.universal.bridge",
-    version: "2.0.0",
-    name: "Universal HTTP Bridge",
-    description: "Multi-provider Torrent to HTTP bridge (KnightCrawler/TPB/Torrentio)",
+    id: "com.nuvio.universal.bridge.v3",
+    version: "3.0.0",
+    name: "Universal Bridge (Comet+MF)",
+    description: "Bypass usando Comet y MediaFusion",
     logo: "https://dl.strem.io/addon-logo.png",
     resources: [
       { name: "stream", types: ["movie", "series"], idPrefixes: ["tt"] },
@@ -53,11 +50,7 @@ router.get('/manifest.json', () => {
 
 router.get('/meta/:type/:id.json', ({ params }) => {
   return json({
-    meta: {
-      id: params.id.replace(".json", ""),
-      type: params.type,
-      name: "Metadata"
-    }
+    meta: { id: params.id.replace(".json", ""), type: params.type, name: "Metadata" }
   });
 });
 
@@ -70,52 +63,50 @@ router.get('/stream/:type/:id.json', async (request, env) => {
   }
   const serverUrl = env.STREMIO_SERVER_URL.replace(/\/$/, "");
 
-  // ==========================================
-  // LÓGICA MULTI-PROVEEDOR
-  // ==========================================
-  
   let validStreams = [];
-  let errorLog = [];
+  let debugLog = [];
 
-  // Iteramos sobre los proveedores hasta encontrar streams
   for (const provider of PROVIDERS) {
     try {
-      console.log(`Intentando con ${provider.name}...`);
-      
+      console.log(`Probando ${provider.name}...`);
       const targetUrl = `${provider.url}/${type}/${id}.json`;
       
       const response = await fetch(targetUrl, {
+        method: "GET",
         headers: {
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", // UA genérico
-        },
-        cf: {
-          cacheTtl: 60, // Pedimos a Cloudflare que use caché si es posible
-          cacheEverything: true
+          "User-Agent": GOOGLEBOT_UA, // Nos disfrazamos de Google
+          "Accept": "application/json",
+          "Cache-Control": "no-cache"
         }
       });
 
       if (!response.ok) {
-        errorLog.push(`${provider.name}: ${response.status}`);
-        continue; // Pasamos al siguiente proveedor
+        debugLog.push(`${provider.name}: Http${response.status}`);
+        continue;
+      }
+
+      // Verificamos que sea JSON antes de parsear para evitar el error "<"
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        debugLog.push(`${provider.name}: Recibido HTML/Texto (Bloqueado)`);
+        continue;
       }
 
       const data = await response.json();
 
       if (data.streams && data.streams.length > 0) {
-        // ¡ÉXITO! Procesamos los streams de este proveedor
         validStreams = data.streams.map(stream => {
           if (!stream.infoHash) return null;
 
           const fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
           const directUrl = `${serverUrl}/${stream.infoHash}/${fileIdx}`;
           
-          // Limpieza de título
           const parts = (stream.title || "").split("\n");
-          const cleanTitle = parts[0] || "Stream";
-          const details = parts[1] || `S:${stream.seeders || '?'} - ${provider.name}`;
+          const cleanTitle = parts[0] || "Video";
+          const details = parts[1] || `Seeds: ${stream.seeders || '?'}`;
 
           return {
-            name: `⚡ ${provider.name}`, // Mostramos qué proveedor funcionó
+            name: `⚡ ${provider.name}`, 
             title: `${cleanTitle}\n${details}`,
             url: directUrl,
             behaviorHints: {
@@ -126,24 +117,20 @@ router.get('/stream/:type/:id.json', async (request, env) => {
           };
         }).filter(Boolean);
 
-        // Si obtuvimos streams válidos, rompemos el bucle y devolvemos
-        if (validStreams.length > 0) {
-          console.log(`Éxito con ${provider.name}: ${validStreams.length} streams`);
-          break; 
-        }
+        if (validStreams.length > 0) break; // Encontramos tesoro, salimos
+      } else {
+        debugLog.push(`${provider.name}: 0 Streams`);
       }
     } catch (e) {
-      console.error(`Error con ${provider.name}:`, e.message);
-      errorLog.push(`${provider.name}: ${e.message}`);
+      debugLog.push(`${provider.name}: Error ${e.message}`);
     }
   }
 
-  // Si después de probar todos no hay nada
   if (validStreams.length === 0) {
     return json({ 
       streams: [{ 
-        name: "⚠️ SIN RESULTADOS", 
-        title: `Fallaron todos los proveedores:\n${errorLog.join("\n")}`, 
+        name: "⚠️ FALLO", 
+        title: `Debug: ${debugLog.join(" | ")}`, 
         url: "#" 
       }] 
     });
