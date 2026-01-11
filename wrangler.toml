@@ -9,3 +9,10 @@ compatibility_date = "2025-11-17"
 [vars]
 STREMIO_SERVER_URL = "https://stremioproxied.sakvragi.workers.dev" 
 # DEJA ESTO COMENTADO SI USAS SECRETOS (RECOMENDADO)
+
+[observability]
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
