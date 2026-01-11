@@ -1,0 +1,15 @@
+{
+  "name": "stremio-http-bridge",
+  "version": "1.0.0",
+  "description": "Middleware para convertir streams de Torrentio a HTTP directo via Stremio Server",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "deploy": "wrangler deploy"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "itty-router": "^4.0.23"
+  }
+}
