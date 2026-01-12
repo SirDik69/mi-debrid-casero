@@ -3,7 +3,7 @@ import { Router } from 'itty-router';
 const router = Router();
 
 // ==========================================
-// 1. LISTA DE PROVEEDORES (Actualizada con tus URLs funcionales)
+// 1. TUS PROVEEDORES (URLs CONFIGURADAS)
 // ==========================================
 const PROVIDERS = [
   {
@@ -11,26 +11,25 @@ const PROVIDERS = [
     url: "https://torrentsdb.com/stream"
   },
   {
-    name: "Comet", // Usamos el dominio .ru que te funcionó
+    name: "Comet", 
     url: "https://comet.stremio.ru/stream"
   },
   {
-    name: "MediaFusion", // Instancia pública robusta
+    name: "MediaFusion", 
     url: "https://mediafusionfortheweebs.midnightignite.me/stream"
   },
   {
     name: "AIOStreams",
+    // Nota: Si AIOStreams devuelve pocos resultados, aumenta el timeout en su web de configuración
     url: "https://aiostreamsfortheweebs.midnightignite.me/stremio/0479360b-f14a-4dff-b7b5-32d70809a4e7/eyJpdiI6IlR0RU1ubWU5NjNJSnFpOVhHVUpzdlE9PSIsImVuY3J5cHRlZCI6IlcwdGd6aEFZNFl1amJzVmhZVFdJRnc9PSIsInR5cGUiOiJhaW9FbmNyeXB0In0/stream"
   }
 ];
 
-// Headers "Chrome 2026" (Blindados)
+// Headers Blindados (Chrome 2026)
 const BROWSER_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "en-US,en;q=0.9",
-  "Cache-Control": "no-cache",
-  "Pragma": "no-cache"
+  "Cache-Control": "no-cache"
 };
 
 const responseHeaders = {
@@ -43,8 +42,68 @@ const responseHeaders = {
 const json = (data) => new Response(JSON.stringify(data), { headers: responseHeaders });
 
 // ==========================================
-// 2. UTILS: SANITIZER
+// 2. EL EMBELLECEDOR (CLEANER)
 // ==========================================
+function cleanStreamInfo(stream, providerName) {
+  let rawTitle = stream.title || stream.name || "";
+  let rawDesc = "";
+  
+  // Si el título tiene saltos de línea, separamos
+  if (rawTitle.includes("\n")) {
+    const parts = rawTitle.split("\n");
+    rawTitle = parts[0];
+    rawDesc = parts.slice(1).join(" ");
+  }
+
+  // LIMPIEZA ESPECÍFICA POR PROVEEDOR
+  
+  if (providerName === "Comet") {
+    // Eliminar "[TORRENT]", "Comet" y "unknown"
+    rawTitle = rawTitle
+      .replace(/\[TORRENT\]/gi, "")
+      .replace(/Comet/gi, "")
+      .replace(/unknown/gi, "")
+      .trim();
+    // Si queda vacío, intentamos rescatar info del nombre del archivo
+    if (!rawTitle || rawTitle.length < 3) {
+        rawTitle = stream.behaviorHints?.filename || "Stream";
+    }
+  }
+
+  if (providerName === "MediaFusion") {
+    // Eliminar emojis, "MediaFusion", "P2P"
+    rawTitle = rawTitle
+      .replace(/MediaFusion/gi, "")
+      .replace(/P2P/gi, "")
+      .replace(/📂|⏳|⚡|🚀/g, "") // Emojis basura
+      .trim();
+  }
+
+  if (providerName === "AIOStreams") {
+    // A veces AIO pone "AddonName | Title"
+    if (rawTitle.includes("|")) {
+        rawTitle = rawTitle.split("|")[1].trim();
+    }
+  }
+
+  // LIMPIEZA GENERAL (Para todos)
+  // Quitar el nombre de la película del inicio si se repite mucho (opcional, pero estético)
+  // Aquí nos enfocamos en resaltar la CALIDAD
+  
+  // Construimos la línea de detalles
+  const seeds = stream.seeders !== undefined ? `👤 ${stream.seeders}` : "";
+  const size = stream.behaviorHints?.videoSize 
+      ? `💾 ${(stream.behaviorHints.videoSize / 1073741824).toFixed(2)} GB` 
+      : (rawDesc.match(/\d+(\.\d+)?\s?GB/) || [""])[0]; // Intento de extraer GB del texto
+
+  // Título final limpio
+  const finalTitle = rawTitle || "Stream";
+  const finalDetails = [size, seeds, providerName].filter(Boolean).join(" • ");
+
+  return `${finalTitle}\n${finalDetails}`;
+}
+
+// Filtro Anti-Grinch (Intrusos)
 function isIntruder(streamTitle, requestType) {
   if (!streamTitle) return false;
   const title = streamTitle.toUpperCase();
@@ -61,10 +120,10 @@ function isIntruder(streamTitle, requestType) {
 
 router.get('/manifest.json', () => {
   return json({
-    id: "com.nuvio.parallel.bridge",
-    version: "5.0.0",
-    name: "Ultimate HTTP Bridge (Parallel)",
-    description: "Multi-provider + Parallel Fetching + Sanitizer",
+    id: "com.nuvio.beautified.bridge",
+    version: "6.0.0",
+    name: "Ultimate HTTP Bridge (Clean)",
+    description: "Bypass Cloudflare + Parallel + Clean UI",
     logo: "https://dl.strem.io/addon-logo.png",
     resources: [
       { name: "stream", types: ["movie", "series"], idPrefixes: ["tt"] },
@@ -91,11 +150,7 @@ router.get('/stream/:type/:id.json', async (request, env) => {
   let allStreams = [];
   let uniqueHashes = new Set();
 
-  // ============================================================
-  // EJECUCIÓN PARALELA (La clave para que salgan todos)
-  // ============================================================
-  
-  // 1. Creamos las promesas de todos los proveedores a la vez
+  // EJECUCIÓN PARALELA
   const fetchPromises = PROVIDERS.map(async (provider) => {
     try {
       const response = await fetch(`${provider.url}/${type}/${id}.json`, {
@@ -103,49 +158,39 @@ router.get('/stream/:type/:id.json', async (request, env) => {
         cf: { cacheTtl: 60 }
       });
 
-      if (!response.ok) return []; // Si falla, devolvemos array vacío
+      if (!response.ok) return [];
 
-      // Intentamos parsear JSON directamente sin verificar headers estrictos
-      // (Esto arregla el problema de MediaFusion a veces enviando text/plain)
       const data = await response.json().catch(() => null);
-
       if (!data || !data.streams) return [];
 
-      // Marcamos el origen para saber quién trajo qué
       return data.streams.map(s => ({ ...s, providerName: provider.name }));
-      
     } catch (e) {
-      return []; // Ignoramos errores de red individuales
+      return [];
     }
   });
 
-  // 2. Esperamos a que TODOS terminen (Promise.all)
   const results = await Promise.all(fetchPromises);
 
-  // 3. Aplanamos y procesamos los resultados
   results.flat().forEach(stream => {
-    // A. Validaciones
     if (!stream.infoHash) return;
     if (uniqueHashes.has(stream.infoHash)) return;
-    
-    // B. Filtro Sanitario (Anti-Grinch)
-    const fullTitle = stream.title || stream.name || "";
-    if (isIntruder(fullTitle, type)) return;
 
-    // C. Transformación a HTTP (Tu lógica)
+    // 1. Filtro Anti-Intrusos (Series en Películas)
+    const fullOriginalTitle = stream.title || stream.name || "";
+    if (isIntruder(fullOriginalTitle, type)) return;
+
+    // 2. Construcción URL
     const fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
     const directUrl = `${serverUrl}/${stream.infoHash}/${fileIdx}`;
     
-    // D. Formateo Visual
-    const titleParts = fullTitle.split("\n");
-    const cleanTitle = titleParts[0];
-    const details = titleParts[1] || `S:${stream.seeders || '?'} • ${stream.providerName}`;
+    // 3. EMBELLECIMIENTO DEL TÍTULO
+    const prettyTitle = cleanStreamInfo(stream, stream.providerName);
 
     uniqueHashes.add(stream.infoHash);
 
     allStreams.push({
-      name: `⚡ ${stream.providerName}`, // Mostramos el nombre del proveedor real
-      title: `${cleanTitle}\n${details}`,
+      name: `⚡ ${stream.providerName}`, 
+      title: prettyTitle, // Título limpio
       url: directUrl,
       behaviorHints: {
         notWebReady: false,
@@ -156,11 +201,15 @@ router.get('/stream/:type/:id.json', async (request, env) => {
   });
 
   if (allStreams.length === 0) {
-    return json({ streams: [{ name: "⚠️ VACÍO", title: "Ningún proveedor encontró enlaces válidos", url: "#" }] });
+    return json({ streams: [{ name: "⚠️ VACÍO", title: "No se encontraron enlaces válidos", url: "#" }] });
   }
 
-  // Opcional: Ordenar por nombre de proveedor para agruparlos visualmente
-  allStreams.sort((a, b) => a.name.localeCompare(b.name));
+  // Ordenar: Priorizamos 4K/1080p detectando texto en el título
+  allStreams.sort((a, b) => {
+    const qA = (a.title.includes("4k") || a.title.includes("2160p")) ? 2 : (a.title.includes("1080p") ? 1 : 0);
+    const qB = (b.title.includes("4k") || b.title.includes("2160p")) ? 2 : (b.title.includes("1080p") ? 1 : 0);
+    return qB - qA; // Mayor calidad primero
+  });
 
   return json({ streams: allStreams });
 });
