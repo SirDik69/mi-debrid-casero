@@ -3,7 +3,7 @@ import { Router } from 'itty-router';
 const router = Router();
 
 // ==========================================
-// 1. TUS PROVEEDORES (URLs CONFIGURADAS)
+// 1. TUS PROVEEDORES PERSONALIZADOS
 // ==========================================
 const PROVIDERS = [
   {
@@ -20,12 +20,11 @@ const PROVIDERS = [
   },
   {
     name: "AIOStreams",
-    // Nota: Si AIOStreams devuelve pocos resultados, aumenta el timeout en su web de configuración
     url: "https://aiostreamsfortheweebs.midnightignite.me/stremio/0479360b-f14a-4dff-b7b5-32d70809a4e7/eyJpdiI6IlR0RU1ubWU5NjNJSnFpOVhHVUpzdlE9PSIsImVuY3J5cHRlZCI6IlcwdGd6aEFZNFl1amJzVmhZVFdJRnc9PSIsInR5cGUiOiJhaW9FbmNyeXB0In0/stream"
   }
 ];
 
-// Headers Blindados (Chrome 2026)
+// Headers
 const BROWSER_HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   "Accept": "application/json, text/plain, */*",
@@ -42,68 +41,62 @@ const responseHeaders = {
 const json = (data) => new Response(JSON.stringify(data), { headers: responseHeaders });
 
 // ==========================================
-// 2. EL EMBELLECEDOR (CLEANER)
+// 2. PARSER INTELIGENTE (BEAUTIFIER)
 // ==========================================
-function cleanStreamInfo(stream, providerName) {
-  let rawTitle = stream.title || stream.name || "";
-  let rawDesc = "";
+function parseStreamDetails(rawTitle, rawName, sizeBytes, seeds, providerName) {
+  const text = (rawTitle + " " + rawName).toUpperCase();
   
-  // Si el título tiene saltos de línea, separamos
-  if (rawTitle.includes("\n")) {
-    const parts = rawTitle.split("\n");
-    rawTitle = parts[0];
-    rawDesc = parts.slice(1).join(" ");
-  }
-
-  // LIMPIEZA ESPECÍFICA POR PROVEEDOR
+  // 1. Detectar Resolución
+  let quality = "HD";
+  if (text.includes("4K") || text.includes("2160P")) quality = "4K [UHD]";
+  else if (text.includes("1080P")) quality = "1080p [FHD]";
   
-  if (providerName === "Comet") {
-    // Eliminar "[TORRENT]", "Comet" y "unknown"
-    rawTitle = rawTitle
-      .replace(/\[TORRENT\]/gi, "")
-      .replace(/Comet/gi, "")
-      .replace(/unknown/gi, "")
-      .trim();
-    // Si queda vacío, intentamos rescatar info del nombre del archivo
-    if (!rawTitle || rawTitle.length < 3) {
-        rawTitle = stream.behaviorHints?.filename || "Stream";
-    }
-  }
-
-  if (providerName === "MediaFusion") {
-    // Eliminar emojis, "MediaFusion", "P2P"
-    rawTitle = rawTitle
-      .replace(/MediaFusion/gi, "")
-      .replace(/P2P/gi, "")
-      .replace(/📂|⏳|⚡|🚀/g, "") // Emojis basura
-      .trim();
-  }
-
-  if (providerName === "AIOStreams") {
-    // A veces AIO pone "AddonName | Title"
-    if (rawTitle.includes("|")) {
-        rawTitle = rawTitle.split("|")[1].trim();
-    }
-  }
-
-  // LIMPIEZA GENERAL (Para todos)
-  // Quitar el nombre de la película del inicio si se repite mucho (opcional, pero estético)
-  // Aquí nos enfocamos en resaltar la CALIDAD
+  // 2. Detectar Fuente/Tecnología
+  let source = "";
+  if (text.includes("BLURAY") || text.includes("BLU-RAY")) source = "💿 BluRay";
+  else if (text.includes("WEB-DL") || text.includes("WEB")) source = "☁️ WEB-DL";
+  else if (text.includes("HDR") || text.includes("DV") || text.includes("DOLBY")) source = "🌈 HDR/DV";
+  else if (text.includes("HDRIP") || text.includes("BRRIP")) source = "💿 Rip";
   
-  // Construimos la línea de detalles
-  const seeds = stream.seeders !== undefined ? `👤 ${stream.seeders}` : "";
-  const size = stream.behaviorHints?.videoSize 
-      ? `💾 ${(stream.behaviorHints.videoSize / 1073741824).toFixed(2)} GB` 
-      : (rawDesc.match(/\d+(\.\d+)?\s?GB/) || [""])[0]; // Intento de extraer GB del texto
+  // 3. Detectar Audio/Extras
+  let audio = "";
+  if (text.includes("DUAL") || text.includes("MULTI")) audio = "🗣️ Dual/Multi";
+  
+  // 4. Formatear Tamaño
+  let sizeStr = "? GB";
+  if (sizeBytes) {
+    sizeStr = (sizeBytes / 1073741824).toFixed(2) + " GB";
+  } else {
+    // Intentar rescatar del texto si no viene numérico
+    const match = text.match(/(\d+(\.\d+)?)\s?GB/);
+    if (match) sizeStr = match[0];
+  }
 
-  // Título final limpio
-  const finalTitle = rawTitle || "Stream";
-  const finalDetails = [size, seeds, providerName].filter(Boolean).join(" • ");
+  // 5. Formatear Seeds
+  const seedsStr = seeds ? `🌱 ${seeds}` : "";
 
-  return `${finalTitle}\n${finalDetails}`;
+  // 6. Limpiar Filename (El texto largo)
+  // Quitamos basura común para dejar el nombre del archivo más limpio
+  let filename = rawTitle
+    .replace(/\[TORRENT\]/gi, "")
+    .replace(/MediaFusion/gi, "")
+    .replace(/Comet/gi, "")
+    .replace(/unknown/gi, "")
+    .trim();
+
+  // CONSTRUCCIÓN VISUAL (Como tu captura)
+  // Línea 1: Detalles técnicos con iconos
+  const line1 = [`📦 ${sizeStr}`, seedsStr, source].filter(Boolean).join("  ");
+  // Línea 2: Audio y Provider
+  const line2 = [audio, `🏷️ ${providerName}`].filter(Boolean).join("  ");
+  
+  return {
+    shortName: `⚡ ${quality}`, // Esto saldrá en negrita arriba (ej: ⚡ 1080p [FHD])
+    description: `${line1}\n${line2}\n📄 ${filename}` // Esto es el cuerpo
+  };
 }
 
-// Filtro Anti-Grinch (Intrusos)
+// Filtro Anti-Intrusos
 function isIntruder(streamTitle, requestType) {
   if (!streamTitle) return false;
   const title = streamTitle.toUpperCase();
@@ -117,13 +110,12 @@ function isIntruder(streamTitle, requestType) {
 // ==========================================
 // 3. RUTAS
 // ==========================================
-
 router.get('/manifest.json', () => {
   return json({
-    id: "com.nuvio.beautified.bridge",
-    version: "6.0.0",
-    name: "Ultimate HTTP Bridge (Clean)",
-    description: "Bypass Cloudflare + Parallel + Clean UI",
+    id: "com.nuvio.visual.bridge",
+    version: "7.0.0",
+    name: "Ultimate Bridge (Visual Pro)",
+    description: "Cloudflare Bypass + High Quality UI",
     logo: "https://dl.strem.io/addon-logo.png",
     resources: [
       { name: "stream", types: ["movie", "series"], idPrefixes: ["tt"] },
@@ -150,7 +142,6 @@ router.get('/stream/:type/:id.json', async (request, env) => {
   let allStreams = [];
   let uniqueHashes = new Set();
 
-  // EJECUCIÓN PARALELA
   const fetchPromises = PROVIDERS.map(async (provider) => {
     try {
       const response = await fetch(`${provider.url}/${type}/${id}.json`, {
@@ -159,14 +150,10 @@ router.get('/stream/:type/:id.json', async (request, env) => {
       });
 
       if (!response.ok) return [];
-
       const data = await response.json().catch(() => null);
       if (!data || !data.streams) return [];
-
       return data.streams.map(s => ({ ...s, providerName: provider.name }));
-    } catch (e) {
-      return [];
-    }
+    } catch (e) { return []; }
   });
 
   const results = await Promise.all(fetchPromises);
@@ -175,22 +162,26 @@ router.get('/stream/:type/:id.json', async (request, env) => {
     if (!stream.infoHash) return;
     if (uniqueHashes.has(stream.infoHash)) return;
 
-    // 1. Filtro Anti-Intrusos (Series en Películas)
-    const fullOriginalTitle = stream.title || stream.name || "";
-    if (isIntruder(fullOriginalTitle, type)) return;
+    // 1. Filtro
+    const rawTitle = stream.title || stream.name || stream.behaviorHints?.filename || "";
+    if (isIntruder(rawTitle, type)) return;
 
-    // 2. Construcción URL
+    // 2. URL
     const fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
     const directUrl = `${serverUrl}/${stream.infoHash}/${fileIdx}`;
     
-    // 3. EMBELLECIMIENTO DEL TÍTULO
-    const prettyTitle = cleanStreamInfo(stream, stream.providerName);
+    // 3. EMBELLECIMIENTO (VISUAL PRO)
+    const rawName = stream.name || "";
+    // Priorizamos el tamaño que viene en behaviorHints, si no, null
+    const sizeBytes = stream.behaviorHints?.videoSize || null;
+    
+    const visual = parseStreamDetails(rawTitle, rawName, sizeBytes, stream.seeders, stream.providerName);
 
     uniqueHashes.add(stream.infoHash);
 
     allStreams.push({
-      name: `⚡ ${stream.providerName}`, 
-      title: prettyTitle, // Título limpio
+      name: visual.shortName, // Ej: ⚡ 1080p [FHD]
+      title: visual.description, // Bloque de detalles con iconos
       url: directUrl,
       behaviorHints: {
         notWebReady: false,
@@ -201,14 +192,14 @@ router.get('/stream/:type/:id.json', async (request, env) => {
   });
 
   if (allStreams.length === 0) {
-    return json({ streams: [{ name: "⚠️ VACÍO", title: "No se encontraron enlaces válidos", url: "#" }] });
+    return json({ streams: [{ name: "⚠️ VACÍO", title: "Sin resultados", url: "#" }] });
   }
 
-  // Ordenar: Priorizamos 4K/1080p detectando texto en el título
+  // Ordenar por calidad (4K primero)
   allStreams.sort((a, b) => {
-    const qA = (a.title.includes("4k") || a.title.includes("2160p")) ? 2 : (a.title.includes("1080p") ? 1 : 0);
-    const qB = (b.title.includes("4k") || b.title.includes("2160p")) ? 2 : (b.title.includes("1080p") ? 1 : 0);
-    return qB - qA; // Mayor calidad primero
+    const is4kewA = a.name.includes("4K");
+    const is4kewB = b.name.includes("4K");
+    return is4kewB - is4kewA;
   });
 
   return json({ streams: allStreams });
